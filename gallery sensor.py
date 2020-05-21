@@ -20,12 +20,13 @@ class Post:
     def __init__(self):
         self.is_pic = False
         self.is_rcm = False
-        self.title = False
+        self.title = 'unknown'
         self.pk = 0
         self.view_count = 0
         self.like_count = 0
         self.dislike_count = 0
         self.comment_count = 0
+        self.comments = []
         self.time = ''
 
     def __str__(self):
@@ -48,6 +49,7 @@ class Post:
 async def crawling(page: int):
     print(f'page {page} crawling starts')
     data = {}
+    res = None
     for _ in range(10):
         try:
             res = await req.get(f'{URL}?page={page}', headers=header, cookies={'list_count': '200'})
@@ -59,12 +61,12 @@ async def crawling(page: int):
     # print(content)
     for post_node in bs4.BeautifulSoup(res.content.decode('utf-8'), features='html.parser').find_all('div', attrs={
         'class': 'gall-detail-lnktb'}):
+        post_obj = Post()
         try:
-            post_obj = Post()
             text = post_node.findChild().attrs['href']
-            text = text[len('https://gall.dcinside.com/board/newconservativeparty/'):]
+            text = text[len(f'https://gall.dcinside.com/board/{GALL_ID}/'):]
             post_obj.pk = int(text[:text.rfind('?')])
-            print(f'post {post_obj.pk} crawling starts')
+            # print(f'post {post_obj.pk} crawling starts')
 
             post_obj.title = post_node.find('span', attrs={'class': 'detail-txt'}).text
 
@@ -76,6 +78,7 @@ async def crawling(page: int):
             if post_node.find('span', attrs={'class': 'sp-lst-recotxt'}):
                 post_obj.is_rcm = True
 
+            res_post = None
             for _ in range(10):
                 try:
                     res_post = await req.get(f'{URL}/{post_obj.pk}', headers=header)
@@ -93,14 +96,25 @@ async def crawling(page: int):
 
             post_obj.view_count = int(view_count.text[4:])
             post_obj.comment_count = int(comment_count.text[3:])
+            if post_obj.pk == 195079:
+                # print(detail_node)
+                for commend_node in detail_node.find_all('li'):
+                    if 'class' in commend_node.attrs:
+                        if 'comment' in commend_node.attrs['class']:
+                            post_obj.comments.append([commend_node.find('a', attrs={'class': 'nick'}).text,
+                                                      commend_node.find('p', attrs={'class': 'txt'}).text, []])
+                        elif 'comment-add' in commend_node.attrs['class']:
+                            post_obj.comments[-1][2].append([commend_node.find('a', attrs={'class': 'nick'}).text,
+                                                             commend_node.find('p', attrs={'class': 'txt'}).text])
 
             post_obj.like_count = int(detail_node.find('span', attrs={'id': 'recomm_btn'}).text)
             post_obj.dislike_count = int(detail_node.find('span', attrs={'id': 'nonrecomm_btn'}).text)
             data[post_obj.pk] = post_obj
-            print(f'post {post_obj.pk} crawling ends')
+            # print(f'post {post_obj.pk} crawling ends')
         except AttributeError as e:
-            print(f'post {post_obj.pk} crawling interupts')
-    print(f'page {page} crawling ends')
+            print(e)
+            # print(f'post {post_obj.pk} crawling interupts')
+    # print(f'page {page} crawling ends')
     return data
 
 
@@ -183,7 +197,7 @@ def get_words(content: str):
                     if word not in dictionary:
                         dictionary[word] = words[0]
                     else:
-                        print(f'중북된 단어, {word}가 존재합니다!')
+                        print(f'중복된 단어, {word}가 존재합니다!')
     return dictionary
 
 
@@ -209,7 +223,8 @@ def process_word(word: str):
             file.write(',' + word)
 
 
-def get_potential_word(processed_title=None, posts=None, folder=None, unnecessary_words=None, unnecessary_suffixes=None):
+def get_potential_word(processed_title=None, posts=None, folder=None, unnecessary_words=None,
+                       unnecessary_suffixes=None):
     unknown_word_folder = {}
     if processed_title:
         for unrecognized_title in processed_title:
@@ -238,7 +253,6 @@ def get_potential_word(processed_title=None, posts=None, folder=None, unnecessar
                     unknown_word_folder[len(micro_word)] = collections.defaultdict(int)
                 unknown_word_folder[len(micro_word)][micro_word] += 1
 
-
     unknown_word_folder = [v for k, v in
                            sorted(unknown_word_folder.items(), key=lambda item: item[0], reverse=True) if k > 2]
     count = 0
@@ -255,10 +269,8 @@ def get_potential_word(processed_title=None, posts=None, folder=None, unnecessar
 
 
 def recognize_data():
-    posts = []
     with io.open('data', 'r', encoding='utf-8') as file:
-        for post in eval(file.read()):
-            posts.append(Post.from_post(post))
+        posts = [Post.from_post(dictionary) for dictionary in eval(file.read())]
 
     folder = get_folder(['common', 'countries', 'estate', 'men', 'politics', 'others'])
 
@@ -269,7 +281,8 @@ def recognize_data():
         unnecessary_suffixes = get_words(file.read())
 
     post_sort_by_recommend = sorted(posts,
-                                    key=lambda post: (post.like_count - post.dislike_count) / (post.view_count + 1) - 0.5,
+                                    key=lambda post: (post.like_count - post.dislike_count) / (
+                                            post.view_count + 1) - 0.5,
                                     reverse=True)
 
     word_point = collections.defaultdict(list)
@@ -281,7 +294,8 @@ def recognize_data():
             word_point[word].append(point)
             word_count[word] += 1
 
-    word_used_count = {k: v for k, v in sorted(word_point.items(), key=lambda item: statistics.median(item[1]), reverse=True)}
+    word_used_count = {k: v for k, v in
+                       sorted(word_point.items(), key=lambda item: statistics.median(item[1]), reverse=True)}
     k = 0
     for word in word_used_count:
         if k > 20:
@@ -289,14 +303,9 @@ def recognize_data():
         k += 1
         print(word)
 
-
-
-
-    
     post_sort_by_issued = sorted(posts, key=lambda post: (post.like_count + post.dislike_count + post.comment_count) / (
             post.view_count + 1), reverse=True)
 
-    
     print('개추받는 게시물 TOP 10')
     for post in post_sort_by_recommend[:10]:
         print(post.pk, post.title, post.time)
@@ -322,7 +331,7 @@ def recognize_data():
     # get_potential_word(posts=posts, folder=folder, unnecessary_words=unnecessary_words, unnecessary_suffixes=unnecessary_suffixes)
 
 
-MAX_POST = 50
+MAX_POST = 10
 MAX_CONNECTION = 5
 
 
